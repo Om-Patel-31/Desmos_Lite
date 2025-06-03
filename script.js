@@ -9,18 +9,15 @@ let xMin = -10, xMax = 10, yMin = -5, yMax = 5;
 function scaleX() { return width / (xMax - xMin); }
 function scaleY() { return height / (yMax - yMin); }
 
-// Helper to read CSS variables from :root or body
 function getCssVar(name) {
   return getComputedStyle(document.body).getPropertyValue(name).trim();
 }
 
 function drawAxes() {
-  // Clear and fill background from CSS var
   const bgColor = getCssVar('--canvas-bg') || '#f9f9f9';
   ctx.fillStyle = bgColor;
   ctx.fillRect(0, 0, width, height);
 
-  // Draw axes using CSS var for border color
   const axisColor = getCssVar('--border-color') || '#bbb';
   ctx.beginPath();
   ctx.strokeStyle = axisColor;
@@ -40,61 +37,90 @@ function getFunctions() {
   return Array.from(rows).map(row => {
     const color = row.querySelector(".color-picker")?.value || "#ff0000";
     const equation = row.querySelector(".equation").value.trim();
-    return { color, equation };
+    return { color, equation, row };
   }).filter(f => f.equation);
 }
 
 function graphFunctions() {
   drawAxes();
-
   const funcs = getFunctions();
-  funcs.forEach(({ color, equation }) => {
-    let expr;
+
+  const xStep = (xMax - xMin) / width;
+  const yStep = (yMax - yMin) / height;
+
+  funcs.forEach(({ color, equation, row }) => {
+    let leftExpr, rightExpr;
+    if (!equation.includes("=")) {
+      row.classList.add("invalid");
+      return;
+    }
+
+    const [left, right] = equation.split("=").map(e => e.trim());
     try {
-      expr = math.compile(equation);
-    } catch (e) {
-      return; // skip invalid expression
+      leftExpr = math.compile(left);
+      rightExpr = math.compile(right);
+      row.classList.remove("invalid");
+    } catch {
+      row.classList.add("invalid");
+      return;
     }
 
-    ctx.beginPath();
-    ctx.strokeStyle = color;
-    let first = true;
+    ctx.fillStyle = color;
 
-    for (let i = 0; i <= width; i++) {
-      const x = xMin + (i / scaleX());
-      let y;
-      try {
-        y = expr.evaluate({ x });
-      } catch (e) {
-        continue;
-      }
+    for (let px = 0; px < width; px++) {
+      const x = xMin + px * xStep;
+      for (let py = 0; py < height; py++) {
+        const y = yMax - py * yStep;
 
-      const px = i;
-      const py = height - ((y - yMin) * scaleY());
-
-      if (first) {
-        ctx.moveTo(px, py);
-        first = false;
-      } else {
-        ctx.lineTo(px, py);
+        try {
+          const leftVal = leftExpr.evaluate({ x, y });
+          const rightVal = rightExpr.evaluate({ x, y });
+          if (Math.abs(leftVal - rightVal) < 0.05) {
+            ctx.fillRect(px, py, 1, 1);
+          }
+        } catch { continue; }
       }
     }
-    ctx.stroke();
   });
 }
 
 function addFunction() {
   const row = document.createElement("div");
   row.className = "function-row";
-  // Include color picker input for colors, default random color
   row.innerHTML = `
-    <input type="color" class="color-picker" value="#${Math.floor(Math.random()*16777215).toString(16)}">
-    <input type="text" class="equation" placeholder="Enter function, e.g. sin(x), x^2" />
+    <input type="color" class="color-picker" value="#${Math.floor(Math.random()*0xFFFFFF).toString(16).padStart(6, '0')}">
+    <input type="text" class="equation" placeholder="Enter equation, e.g. y=sin(x), x^2+y^2=4" />
+    <button class="delete-btn" title="Delete function">✕</button>
   `;
   functionsDiv.appendChild(row);
 
-  row.querySelector(".equation").addEventListener("input", graphFunctions);
-  row.querySelector(".color-picker").addEventListener("input", graphFunctions);
+  const eqInput = row.querySelector(".equation");
+  const colorInput = row.querySelector(".color-picker");
+
+  const validateAndGraph = () => {
+    try {
+      const eq = eqInput.value.trim();
+      if (eq.includes("=")) {
+        const [l, r] = eq.split("=");
+        math.compile(l.trim());
+        math.compile(r.trim());
+        row.classList.remove("invalid");
+      } else {
+        row.classList.add("invalid");
+      }
+    } catch {
+      row.classList.add("invalid");
+    }
+    graphFunctions();
+  };
+
+  eqInput.addEventListener("input", validateAndGraph);
+  colorInput.addEventListener("input", graphFunctions);
+
+  row.querySelector(".delete-btn").addEventListener("click", () => {
+    row.remove();
+    graphFunctions();
+  });
 
   graphFunctions();
 }
@@ -104,6 +130,8 @@ function zoom(factor) {
   const yCenter = (yMin + yMax) / 2;
   const newWidth = (xMax - xMin) * factor;
   const newHeight = (yMax - yMin) * factor;
+
+  if (newWidth < 0.01 || newWidth > 1e6 || newHeight < 0.01 || newHeight > 1e6) return;
 
   xMin = xCenter - newWidth / 2;
   xMax = xCenter + newWidth / 2;
@@ -117,43 +145,35 @@ function zoomIn() { zoom(0.8); }
 function zoomOut() { zoom(1.25); }
 
 let lastTouch = null;
-
-canvas.addEventListener("wheel", (e) => {
+canvas.addEventListener("wheel", e => {
   zoom(e.deltaY > 0 ? 1.1 : 0.9);
   e.preventDefault();
 });
-
-canvas.addEventListener("pointerdown", (e) => {
+canvas.addEventListener("pointerdown", e => {
   lastTouch = { x: e.clientX, y: e.clientY };
   canvas.setPointerCapture(e.pointerId);
 });
-
-canvas.addEventListener("pointermove", (e) => {
+canvas.addEventListener("pointermove", e => {
   if (!lastTouch) return;
   const dx = (e.clientX - lastTouch.x) / scaleX();
   const dy = (e.clientY - lastTouch.y) / scaleY();
-
-  xMin -= dx;
-  xMax -= dx;
-  yMin += dy;
-  yMax += dy;
-
+  xMin -= dx; xMax -= dx; yMin += dy; yMax += dy;
   lastTouch = { x: e.clientX, y: e.clientY };
   graphFunctions();
 });
+canvas.addEventListener("pointerup", () => { lastTouch = null; });
 
-canvas.addEventListener("pointerup", () => {
-  lastTouch = null;
+window.addEventListener('DOMContentLoaded', () => {
+  const savedTheme = localStorage.getItem('theme');
+  const isDark = savedTheme === 'dark';
+  document.body.classList.toggle('dark', isDark);
+  document.getElementById('theme-toggle').checked = isDark;
+  addFunction(); // default
 });
 
-// Initial function and graph
-addFunction();
-drawAxes();
-
-// Handle theme toggle to redraw graph
-const toggle = document.getElementById('theme-toggle');
-toggle.addEventListener('change', () => {
-  document.body.classList.toggle('dark', toggle.checked);
-  localStorage.setItem('theme', toggle.checked ? 'dark' : 'light');
-  graphFunctions();  // redraw with updated colors
+document.getElementById('theme-toggle').addEventListener('change', e => {
+  const isDark = e.target.checked;
+  document.body.classList.toggle('dark', isDark);
+  localStorage.setItem('theme', isDark ? 'dark' : 'light');
+  graphFunctions();
 });

@@ -58,7 +58,25 @@ canvas {
   margin-bottom: 5px;
 }
 
-/* Toggle switch styles */
+.function-row.invalid .equation {
+  border-color: red;
+  background-color: #ffe5e5;
+}
+
+.delete-btn {
+  margin-left: 5px;
+  padding: 6px 10px;
+  background: crimson;
+  color: white;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.delete-btn:hover {
+  background: darkred;
+}
+
 .switch {
   position: relative;
   display: inline-block;
