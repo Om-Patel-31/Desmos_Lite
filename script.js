@@ -1,483 +1,671 @@
-// script.js
+// Advanced Graphing Calculator
 
-// Global state
 const canvas = document.getElementById('graph');
 const ctx = canvas.getContext('2d');
-const functionsContainer = document.getElementById('functions');
+const functionsList = document.getElementById('functions-list');
+const addFunctionBtn = document.getElementById('add-function');
+const exportPNGBtn = document.getElementById('export-png');
+const exportSVGBtn = document.getElementById('export-svg');
 const themeToggle = document.getElementById('theme-toggle');
 
-let width, height;
-let scale = 50;  // pixels per unit
-let offsetX = 0;
-let offsetY = 0;
+let width = canvas.width;
+let height = canvas.height;
 
-const functionsList = []; // {id, expr, color, visible, type}
+const colors = Array.from(getComputedStyle(document.documentElement)
+  .getPropertyValue('--func-colors').split(',')).map(s => s.trim());
 
-function generateId() {
-  return Math.random().toString(36).substr(2, 9);
-}
+let functions = [];
+let scale = 50; // pixels per unit
+let offsetX = width / 2;
+let offsetY = height / 2;
+let dragging = false;
+let dragStart = {x: 0, y: 0};
+let dragOffsetStart = {x: offsetX, y: offsetY};
 
-// Utils
-function clearCanvas() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-}
+const epsilon = 0.02; // for implicit zero crossing detection
+const pixelStep = 3; // step size for implicit pixel checking (higher is faster, lower is more precise)
 
-function toCanvasCoords(x, y) {
+themeToggle.addEventListener('change', () => {
+  document.body.classList.toggle('dark', themeToggle.checked);
+  draw();
+});
+
+function unitToPixel(x, y) {
   return {
-    x: width/2 + (x + offsetX) * scale,
-    y: height/2 - (y + offsetY) * scale,
+    x: offsetX + x * scale,
+    y: offsetY - y * scale,
   };
 }
 
-function fromCanvasCoords(cx, cy) {
+function pixelToUnit(px, py) {
   return {
-    x: (cx - width/2)/scale - offsetX,
-    y: (height/2 - cy)/scale - offsetY,
+    x: (px - offsetX) / scale,
+    y: (offsetY - py) / scale,
   };
 }
 
-function drawAxes() {
-  ctx.strokeStyle = '#888';
-  ctx.lineWidth = 1;
+function addFunction(value = '') {
+  const id = Date.now() + Math.random();
+  const color = colors[functions.length % colors.length];
+  const fnObj = {
+    id,
+    input: value,
+    color,
+    visible: true,
+    error: false,
+    compiled: null,
+    type: null,
+    rawInput: value.trim(),
+  };
+  functions.push(fnObj);
+  renderFunctions();
+  draw();
+}
 
-  // X axis
-  ctx.beginPath();
-  const yZero = toCanvasCoords(0, 0).y;
-  ctx.moveTo(0, yZero);
-  ctx.lineTo(width, yZero);
-  ctx.stroke();
+function removeFunction(id) {
+  functions = functions.filter(f => f.id !== id);
+  renderFunctions();
+  draw();
+}
 
-  // Y axis
-  ctx.beginPath();
-  const xZero = toCanvasCoords(0, 0).x;
-  ctx.moveTo(xZero, 0);
-  ctx.lineTo(xZero, height);
-  ctx.stroke();
-
-  // Draw grid lines every 1 unit
-  ctx.strokeStyle = '#eee';
-  ctx.lineWidth = 1;
-  const unitsHorizontal = Math.ceil(width / scale / 2);
-  const unitsVertical = Math.ceil(height / scale / 2);
-
-  // Vertical grid lines
-  for(let i = -unitsHorizontal; i <= unitsHorizontal; i++) {
-    let cx = toCanvasCoords(i, 0).x;
-    ctx.beginPath();
-    ctx.moveTo(cx, 0);
-    ctx.lineTo(cx, height);
-    ctx.stroke();
-  }
-
-  // Horizontal grid lines
-  for(let i = -unitsVertical; i <= unitsVertical; i++) {
-    let cy = toCanvasCoords(0, i).y;
-    ctx.beginPath();
-    ctx.moveTo(0, cy);
-    ctx.lineTo(width, cy);
-    ctx.stroke();
-  }
-
-  // Axis labels every 1 unit (skip 0)
-  ctx.fillStyle = '#666';
-  ctx.font = '11px Arial';
-  for(let i = -unitsHorizontal; i <= unitsHorizontal; i++) {
-    if(i !== 0) {
-      const cx = toCanvasCoords(i, 0).x;
-      ctx.fillText(i, cx + 2, yZero - 2);
-    }
-  }
-  for(let i = -unitsVertical; i <= unitsVertical; i++) {
-    if(i !== 0) {
-      const cy = toCanvasCoords(0, i).y;
-      ctx.fillText(i, xZero + 4, cy - 2);
-    }
+function toggleVisibility(id) {
+  const fn = functions.find(f => f.id === id);
+  if (fn) {
+    fn.visible = !fn.visible;
+    renderFunctions();
+    draw();
   }
 }
 
-function parseFunctionInput(input) {
-  // Simple parser - will try to detect parametric, polar, inequality, or normal function
-  // Returns {type: 'normal'|'parametric'|'polar'|'inequality', expr: string or object}
+function setError(id, isError) {
+  const fn = functions.find(f => f.id === id);
+  if (fn) {
+    fn.error = isError;
+    renderFunctions();
+  }
+}
 
+function parseFunction(input) {
   input = input.trim();
 
-  if (input.includes(',')) {
-    // maybe parametric "x(t), y(t)" format
+  // Empty input invalid
+  if (!input) return null;
+
+  // Parametric: x(t)=..., y(t)=...
+  if (/x\s*\(t\)/i.test(input) && /y\s*\(t\)/i.test(input)) {
     const parts = input.split(',');
-    if(parts.length === 2) {
-      return {
-        type: 'parametric',
-        xExpr: parts[0].trim(),
-        yExpr: parts[1].trim()
-      };
+    let xExpr = null, yExpr = null;
+    for (const p of parts) {
+      if (/x\s*\(t\)/i.test(p)) xExpr = p.split('=')[1]?.trim();
+      if (/y\s*\(t\)/i.test(p)) yExpr = p.split('=')[1]?.trim();
+    }
+    if (!xExpr || !yExpr) return null;
+    try {
+      const xC = math.compile(xExpr);
+      const yC = math.compile(yExpr);
+      return {type: 'parametric', xC, yC};
+    } catch {
+      return null;
     }
   }
 
-  if(input.startsWith('r=')) {
-    // polar, like r=2*sin(theta)
-    return {
-      type: 'polar',
-      expr: input.slice(2).trim()
-    };
+  // Polar: r=...
+  if (/^r\s*=/i.test(input)) {
+    const expr = input.split('=')[1]?.trim();
+    if (!expr) return null;
+    try {
+      const rC = math.compile(expr);
+      return {type: 'polar', rC};
+    } catch {
+      return null;
+    }
   }
 
-  if(input.includes('<') || input.includes('>') || input.includes('≤') || input.includes('≥')) {
-    return {
-      type: 'inequality',
-      expr: input
-    };
+  // Implicit or inequality: contains = or < > ≤ ≥
+  if (/=/.test(input) || /[<>≤≥]/.test(input)) {
+    // Try to parse sides for implicit
+    try {
+      // For implicit equations: turn "expr = expr" into "expr - expr"
+      let expr = input;
+      const eqMatch = input.match(/=/);
+      if (eqMatch) {
+        const parts = input.split('=');
+        if (parts.length === 2) {
+          expr = `(${parts[0]}) - (${parts[1]})`;
+        }
+      }
+      const exprC = math.compile(expr);
+      return {type: 'implicit', exprC, rawInput: input};
+    } catch {
+      return null;
+    }
   }
 
-  return {type: 'normal', expr: input};
-}
-
-function evaluateExpression(expr, scope) {
+  // Explicit function: y= or just expression in x
   try {
-    return math.evaluate(expr, scope);
+    let expr = input;
+    if (/^y\s*=/i.test(input)) {
+      expr = input.split('=')[1].trim();
+    }
+    const exprC = math.compile(expr);
+    return {type: 'explicit', exprC};
   } catch {
     return null;
   }
 }
 
-function drawFunction(fn) {
-  if (!fn.visible) return;
-  ctx.strokeStyle = fn.color;
+function evaluateExplicit(fn, x) {
+  try {
+    return fn.exprC.evaluate({x});
+  } catch {
+    return NaN;
+  }
+}
+
+function evaluateParametric(fn, t) {
+  try {
+    return {x: fn.xC.evaluate({t}), y: fn.yC.evaluate({t})};
+  } catch {
+    return {x: NaN, y: NaN};
+  }
+}
+
+function evaluatePolar(fn, theta) {
+  try {
+    const r = fn.rC.evaluate({theta});
+    return {
+      x: r * Math.cos(theta),
+      y: r * Math.sin(theta),
+    };
+  } catch {
+    return {x: NaN, y: NaN};
+  }
+}
+
+function evaluateImplicit(fn, x, y) {
+  try {
+    return fn.exprC.evaluate({x, y});
+  } catch {
+    return NaN;
+  }
+}
+
+function drawGrid() {
+  ctx.clearRect(0, 0, width, height);
+  ctx.strokeStyle = '#aaa';
+  ctx.lineWidth = 1;
+
+  // vertical lines
+  const leftUnit = Math.floor(pixelToUnit(0, 0).x);
+  const rightUnit = Math.ceil(pixelToUnit(width, 0).x);
+  const topUnit = Math.ceil(pixelToUnit(0, 0).y);
+  const bottomUnit = Math.floor(pixelToUnit(0, height).y);
+
+  // draw vertical grid lines
+  for (let i = leftUnit; i <= rightUnit; i++) {
+    const x = offsetX + i * scale;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+  // draw horizontal grid lines
+  for (let i = bottomUnit; i <= topUnit; i++) {
+    const y = offsetY - i * scale;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  // axes
+  ctx.strokeStyle = '#333';
   ctx.lineWidth = 2;
 
-  try {
-    if(fn.type === 'normal') {
-      // y = f(x)
-      ctx.beginPath();
-      let started = false;
-      for(let px = 0; px < width; px++) {
-        const x = fromCanvasCoords(px, 0).x;
-        const scope = {x};
-        let y = evaluateExpression(fn.expr, scope);
-        if(y === null || typeof y !== 'number' || !isFinite(y)) {
-          started = false;
+  // y-axis
+  ctx.beginPath();
+  ctx.moveTo(offsetX, 0);
+  ctx.lineTo(offsetX, height);
+  ctx.stroke();
+
+  // x-axis
+  ctx.beginPath();
+  ctx.moveTo(0, offsetY);
+  ctx.lineTo(width, offsetY);
+  ctx.stroke();
+
+  // axis labels every 1 unit (skip 0)
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.font = '12px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  for (let i = leftUnit; i <= rightUnit; i++) {
+    if (i === 0) continue;
+    const px = offsetX + i * scale;
+    ctx.fillText(i, px, offsetY + 4);
+  }
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = bottomUnit; i <= topUnit; i++) {
+    if (i === 0) continue;
+    const py = offsetY - i * scale;
+    ctx.fillText(i, offsetX - 4, py);
+  }
+}
+
+function drawFunction(fn, idx) {
+  if (!fn.visible || fn.error) return;
+
+  ctx.strokeStyle = fn.color;
+  ctx.fillStyle = fn.color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+
+  switch (fn.type) {
+    case 'explicit': {
+      let first = true;
+      const step = 1 / scale; // step in x units
+      const leftX = pixelToUnit(0, 0).x;
+      const rightX = pixelToUnit(width, 0).x;
+
+      for (let x = leftX; x <= rightX; x += step) {
+        let y = evaluateExplicit(fn, x);
+        if (!isFinite(y)) {
+          ctx.moveTo(NaN, NaN);
           continue;
         }
-        const c = toCanvasCoords(x, y);
-        if(!started) {
-          ctx.moveTo(c.x, c.y);
-          started = true;
+        const p = unitToPixel(x, y);
+        if (first) {
+          ctx.moveTo(p.x, p.y);
+          first = false;
         } else {
-          ctx.lineTo(c.x, c.y);
+          ctx.lineTo(p.x, p.y);
         }
       }
       ctx.stroke();
-
-    } else if(fn.type === 'parametric') {
-      // parametric: x(t), y(t)
-      ctx.beginPath();
-      let started = false;
-      for(let t = -10; t <= 10; t += 0.01) {
-        let x = evaluateExpression(fn.xExpr, {t});
-        let y = evaluateExpression(fn.yExpr, {t});
-        if(x === null || y === null || !isFinite(x) || !isFinite(y)) {
-          started = false;
-          continue;
-        }
-        const c = toCanvasCoords(x, y);
-        if(!started) {
-          ctx.moveTo(c.x, c.y);
-          started = true;
+      break;
+    }
+    case 'parametric': {
+      let first = true;
+      const tStart = -10;
+      const tEnd = 10;
+      const tStep = 0.01;
+      for (let t = tStart; t <= tEnd; t += tStep) {
+        const pt = evaluateParametric(fn, t);
+        if (!isFinite(pt.x) || !isFinite(pt.y)) continue;
+        const p = unitToPixel(pt.x, pt.y);
+        if (first) {
+          ctx.moveTo(p.x, p.y);
+          first = false;
         } else {
-          ctx.lineTo(c.x, c.y);
+          ctx.lineTo(p.x, p.y);
         }
       }
       ctx.stroke();
-
-    } else if(fn.type === 'polar') {
-      // polar: r= expr(theta)
-      ctx.beginPath();
-      let started = false;
-      for(let theta = 0; theta <= 2 * Math.PI; theta += 0.01) {
-        let r = evaluateExpression(fn.expr, {theta});
-        if(r === null || !isFinite(r)) {
-          started = false;
-          continue;
-        }
-        let x = r * Math.cos(theta);
-        let y = r * Math.sin(theta);
-        const c = toCanvasCoords(x, y);
-        if(!started) {
-          ctx.moveTo(c.x, c.y);
-          started = true;
+      break;
+    }
+    case 'polar': {
+      let first = true;
+      const thetaStart = 0;
+      const thetaEnd = 2 * Math.PI;
+      const thetaStep = 0.01;
+      for (let theta = thetaStart; theta <= thetaEnd; theta += thetaStep) {
+        const pt = evaluatePolar(fn, theta);
+        if (!isFinite(pt.x) || !isFinite(pt.y)) continue;
+        const p = unitToPixel(pt.x, pt.y);
+        if (first) {
+          ctx.moveTo(p.x, p.y);
+          first = false;
         } else {
-          ctx.lineTo(c.x, c.y);
+          ctx.lineTo(p.x, p.y);
         }
       }
       ctx.stroke();
+      break;
+    }
+    case 'implicit': {
+      // Draw implicit by sampling pixels - slow but effective for demonstration
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
 
-    } else if(fn.type === 'inequality') {
-      // Inequality shading is expensive - approximate by sampling grid points
-      ctx.fillStyle = fn.color + '40'; // transparent fill
-      const step = 1 / scale; // in graph units
+      for (let py = 0; py < height; py += pixelStep) {
+        for (let px = 0; px < width; px += pixelStep) {
+          const {x, y} = pixelToUnit(px, py);
+          let val = evaluateImplicit(fn, x, y);
+          if (isNaN(val)) continue;
 
-      for(let x = -width/(2*scale) - offsetX; x < width/(2*scale) - offsetX; x += step) {
-        for(let y = -height/(2*scale) - offsetY; y < height/(2*scale) - offsetY; y += step) {
-          // Evaluate inequality with x,y
-          // Replace ≤, ≥ with <=, >= for math.js compatibility
-          let expr = fn.expr.replace(/≤/g, "<=").replace(/≥/g, ">=");
-          try {
-            let result = math.evaluate(expr, {x,y});
-            if(result === true) {
-              const c = toCanvasCoords(x, y);
-              ctx.fillRect(c.x, c.y, 2, 2);
-            }
-          } catch {
-            // ignore errors
+          if (Math.abs(val) < epsilon) {
+            const idx = (py * width + px) * 4;
+            data[idx] = hexToRgb(fn.color).r;
+            data[idx + 1] = hexToRgb(fn.color).g;
+            data[idx + 2] = hexToRgb(fn.color).b;
+            data[idx + 3] = 255;
           }
         }
       }
+      ctx.putImageData(imageData, 0, 0);
+      break;
     }
-  } catch (e) {
-    // Fail silently on drawing errors
   }
 }
 
-function drawAll() {
-  clearCanvas();
-  drawAxes();
-  for(const fn of functionsList) {
-    drawFunction(fn);
+function hexToRgb(hex) {
+  hex = hex.replace(/^#/, '');
+  if (hex.length === 3) {
+    hex = hex.split('').map(x => x + x).join('');
   }
+  const bigint = parseInt(hex, 16);
+  return {
+    r: (bigint >> 16) & 255,
+    g: (bigint >> 8) & 255,
+    b: bigint & 255
+  };
 }
 
-function addFunctionRow(fn) {
-  const id = fn.id;
-  const container = document.createElement('div');
-  container.classList.add('function-row');
-  container.dataset.id = id;
+function renderFunctions() {
+  functionsList.innerHTML = '';
+  functions.forEach((fn, i) => {
+    const div = document.createElement('div');
+    div.className = 'function-entry';
 
-  // Color picker
-  const colorInput = document.createElement('input');
-  colorInput.type = 'color';
-  colorInput.value = fn.color;
-  colorInput.className = 'color-picker';
-  colorInput.title = 'Select function color';
-  colorInput.addEventListener('input', e => {
-    fn.color = e.target.value;
-    drawAll();
+    const colorInd = document.createElement('label');
+    colorInd.className = 'color-indicator' + (fn.visible ? ' visible' : '');
+    colorInd.style.backgroundColor = fn.color;
+    colorInd.title = fn.visible ? 'Click to hide' : 'Click to show';
+    colorInd.onclick = () => {
+      toggleVisibility(fn.id);
+    };
+    div.appendChild(colorInd);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = fn.input;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'Function input');
+    input.classList.toggle('error', fn.error);
+    input.oninput = e => {
+      fn.input = e.target.value;
+      updateFunction(fn);
+    };
+    div.appendChild(input);
+
+    const delBtn = document.createElement('button');
+    delBtn.title = 'Delete function';
+    delBtn.textContent = '✕';
+    delBtn.onclick = () => {
+      removeFunction(fn.id);
+    };
+    div.appendChild(delBtn);
+
+    functionsList.appendChild(div);
   });
-
-  // Input box
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = fn.expr;
-  input.className = 'equation';
-  input.placeholder = 'Enter function (e.g. y=x^2, r=sin(theta), x(t), y(t), x>y)';
-  input.title = 'Enter function or inequality';
-  input.addEventListener('input', () => {
-    validateFunctionInput(fn, input);
-  });
-
-  // Toggle visibility button
-  const toggleBtn = document.createElement('button');
-  toggleBtn.textContent = fn.visible ? '👁' : '🚫';
-  toggleBtn.title = 'Toggle graph visibility';
-  toggleBtn.style.fontSize = '1.1rem';
-  toggleBtn.style.border = 'none';
-  toggleBtn.style.background = 'transparent';
-  toggleBtn.style.cursor = 'pointer';
-  toggleBtn.addEventListener('click', () => {
-    fn.visible = !fn.visible;
-    toggleBtn.textContent = fn.visible ? '👁' : '🚫';
-    drawAll();
-  });
-
-  // Remove button
-  const removeBtn = document.createElement('button');
-  removeBtn.className = 'remove-btn';
-  removeBtn.textContent = '✕';
-  removeBtn.title = 'Remove function';
-  removeBtn.addEventListener('click', () => {
-    const index = functionsList.findIndex(f => f.id === id);
-    if(index !== -1) {
-      functionsList.splice(index, 1);
-      container.remove();
-      drawAll();
-    }
-  });
-
-  container.appendChild(colorInput);
-  container.appendChild(input);
-  container.appendChild(toggleBtn);
-  container.appendChild(removeBtn);
-  functionsContainer.appendChild(container);
-
-  validateFunctionInput(fn, input);
 }
 
-function validateFunctionInput(fn, inputElem) {
-  const val = inputElem.value.trim();
-  if(val === '') {
-    inputElem.classList.remove('invalid');
-    fn.expr = '';
-    fn.type = 'normal';
-    drawAll();
-    return;
-  }
-
-  // Try to parse and test eval a sample value
-  const parsed = parseFunctionInput(val);
-  fn.type = parsed.type;
-
-  let valid = true;
-  try {
-    if(parsed.type === 'normal') {
-      const test = evaluateExpression(parsed.expr, {x: 1});
-      if(typeof test !== 'number' || !isFinite(test)) valid = false;
-    } else if(parsed.type === 'parametric') {
-      const xt = evaluateExpression(parsed.xExpr, {t: 1});
-      const yt = evaluateExpression(parsed.yExpr, {t: 1});
-      if([xt, yt].some(v => typeof v !== 'number' || !isFinite(v))) valid = false;
-    } else if(parsed.type === 'polar') {
-      const rt = evaluateExpression(parsed.expr, {theta: Math.PI/4});
-      if(typeof rt !== 'number' || !isFinite(rt)) valid = false;
-    } else if(parsed.type === 'inequality') {
-      // Check with some sample x,y
-      const expr = parsed.expr.replace(/≤/g, '<=').replace(/≥/g, '>=');
-      const test = math.evaluate(expr, {x:1, y:1});
-      if(typeof test !== 'boolean') valid = false;
-    }
-  } catch {
-    valid = false;
-  }
-
-  if(valid) {
-    inputElem.classList.remove('invalid');
-    fn.expr = val;
-    drawAll();
+function updateFunction(fn) {
+  const parsed = parseFunction(fn.input);
+  if (!parsed) {
+    fn.error = true;
+    fn.compiled = null;
+    fn.type = null;
   } else {
-    inputElem.classList.add('invalid');
+    fn.error = false;
+    fn.compiled = parsed;
+    fn.type = parsed.type;
+    fn.rawInput = fn.input.trim();
   }
+  renderFunctions();
+  draw();
 }
 
-// Zoom controls
-function zoomIn() {
-  scale *= 1.2;
-  drawAll();
-}
-function zoomOut() {
-  scale /= 1.2;
-  drawAll();
-}
-function resetZoom() {
-  scale = 50;
-  offsetX = 0;
-  offsetY = 0;
-  drawAll();
+function draw() {
+  drawGrid();
+  functions.forEach(fn => {
+    if (!fn.error && fn.visible) {
+      drawFunction({...fn, exprC: fn.compiled?.exprC, xC: fn.compiled?.xC, yC: fn.compiled?.yC, rC: fn.compiled?.rC});
+    }
+  });
 }
 
-// Export PNG
+function onWheel(e) {
+  e.preventDefault();
+  const delta = e.deltaY < 0 ? 1.1 : 0.9;
+  const mousePos = {x: e.offsetX, y: e.offsetY};
+  const beforeZoom = pixelToUnit(mousePos.x, mousePos.y);
+
+  scale *= delta;
+  scale = Math.min(Math.max(scale, 10), 500);
+
+  const afterZoom = pixelToUnit(mousePos.x, mousePos.y);
+
+  // Adjust offset to zoom towards mouse pointer
+  offsetX += (afterZoom.x - beforeZoom.x) * scale;
+  offsetY -= (afterZoom.y - beforeZoom.y) * scale;
+
+  draw();
+}
+
+function onMouseDown(e) {
+  dragging = true;
+  dragStart.x = e.clientX;
+  dragStart.y = e.clientY;
+  dragOffsetStart.x = offsetX;
+  dragOffsetStart.y = offsetY;
+  canvas.style.cursor = 'grabbing';
+}
+
+function onMouseMove(e) {
+  if (!dragging) return;
+  const dx = e.clientX - dragStart.x;
+  const dy = e.clientY - dragStart.y;
+
+  offsetX = dragOffsetStart.x + dx;
+  offsetY = dragOffsetStart.y + dy;
+
+  draw();
+}
+
+function onMouseUp() {
+  dragging = false;
+  canvas.style.cursor = 'grab';
+}
+
+// Export canvas to PNG
 function exportPNG() {
-  const dataUrl = canvas.toDataURL('image/png');
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = 'graph.png';
-  a.click();
+  const link = document.createElement('a');
+  link.download = 'graph.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
 }
 
-// Export SVG - very basic, only grid + axes + functions as paths (approximated)
+// Export SVG (basic approximation)
 function exportSVG() {
+  // Create SVG XML with paths for each visible function
   const svgNS = 'http://www.w3.org/2000/svg';
+
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('xmlns', svgNS);
 
-  // Background
-  const rect = document.createElementNS(svgNS, 'rect');
-  rect.setAttribute('width', width);
-  rect.setAttribute('height', height);
-  rect.setAttribute('fill', getComputedStyle(document.body).getPropertyValue('--bg-color').trim());
-  svg.appendChild(rect);
+  // Background rect
+  const bg = document.createElementNS(svgNS, 'rect');
+  bg.setAttribute('width', width);
+  bg.setAttribute('height', height);
+  bg.setAttribute('fill', getComputedStyle(document.body).backgroundColor);
+  svg.appendChild(bg);
 
-  // Axes lines
-  const axesGroup = document.createElementNS(svgNS, 'g');
-  axesGroup.setAttribute('stroke', '#888');
-  axesGroup.setAttribute('stroke-width', '1');
+  // Grid lines
+  const gridGroup = document.createElementNS(svgNS, 'g');
+  gridGroup.setAttribute('stroke', '#aaa');
+  gridGroup.setAttribute('stroke-width', '1');
+  const leftUnit = Math.floor(pixelToUnit(0, 0).x);
+  const rightUnit = Math.ceil(pixelToUnit(width, 0).x);
+  const topUnit = Math.ceil(pixelToUnit(0, 0).y);
+  const bottomUnit = Math.floor(pixelToUnit(0, height).y);
 
-  // X axis
-  const yZero = toCanvasCoords(0, 0).y;
-  const xLine = document.createElementNS(svgNS, 'line');
-  xLine.setAttribute('x1', 0);
-  xLine.setAttribute('y1', yZero);
-  xLine.setAttribute('x2', width);
-  xLine.setAttribute('y2', yZero);
-  axesGroup.appendChild(xLine);
+  for (let i = leftUnit; i <= rightUnit; i++) {
+    const x = offsetX + i * scale;
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', x);
+    line.setAttribute('y1', 0);
+    line.setAttribute('x2', x);
+    line.setAttribute('y2', height);
+    gridGroup.appendChild(line);
+  }
+  for (let i = bottomUnit; i <= topUnit; i++) {
+    const y = offsetY - i * scale;
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', 0);
+    line.setAttribute('y1', y);
+    line.setAttribute('x2', width);
+    line.setAttribute('y2', y);
+    gridGroup.appendChild(line);
+  }
+  svg.appendChild(gridGroup);
 
-  // Y axis
-  const xZero = toCanvasCoords(0, 0).x;
-  const yLine = document.createElementNS(svgNS, 'line');
-  yLine.setAttribute('x1', xZero);
-  yLine.setAttribute('y1', 0);
-  yLine.setAttribute('x2', xZero);
-  yLine.setAttribute('y2', height);
-  axesGroup.appendChild(yLine);
+  // Axes
+  const axes = document.createElementNS(svgNS, 'g');
+  axes.setAttribute('stroke', '#333');
+  axes.setAttribute('stroke-width', '2');
 
-  svg.appendChild(axesGroup);
+  // y axis
+  const yAxis = document.createElementNS(svgNS, 'line');
+  yAxis.setAttribute('x1', offsetX);
+  yAxis.setAttribute('y1', 0);
+  yAxis.setAttribute('x2', offsetX);
+  yAxis.setAttribute('y2', height);
+  axes.appendChild(yAxis);
 
-  // TODO: Export functions as paths is complex, so we skip or do only normal functions (for brevity)
+  // x axis
+  const xAxis = document.createElementNS(svgNS, 'line');
+  xAxis.setAttribute('x1', 0);
+  xAxis.setAttribute('y1', offsetY);
+  xAxis.setAttribute('x2', width);
+  xAxis.setAttribute('y2', offsetY);
+  axes.appendChild(xAxis);
 
-  // Serialize and download
-  const serializer = new XMLSerializer();
-  const svgStr = serializer.serializeToString(svg);
-  const blob = new Blob([svgStr], {type: 'image/svg+xml'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'graph.svg';
-  a.click();
+  svg.appendChild(axes);
+
+  // Functions
+  functions.forEach(fn => {
+    if (!fn.visible || fn.error) return;
+    let pathData = '';
+
+    switch (fn.type) {
+      case 'explicit': {
+        const step = 1 / scale;
+        const leftX = pixelToUnit(0, 0).x;
+        const rightX = pixelToUnit(width, 0).x;
+        let first = true;
+        for (let x = leftX; x <= rightX; x += step) {
+          let y = evaluateExplicit(fn.compiled, x);
+          if (!isFinite(y)) {
+            pathData += ' M ';
+            continue;
+          }
+          const px = offsetX + x * scale;
+          const py = offsetY - y * scale;
+          pathData += (first ? 'M ' : 'L ') + px + ' ' + py + ' ';
+          first = false;
+        }
+        break;
+      }
+      case 'parametric': {
+        let first = true;
+        const tStart = -10;
+        const tEnd = 10;
+        const tStep = 0.01;
+        for (let t = tStart; t <= tEnd; t += tStep) {
+          const pt = evaluateParametric(fn.compiled, t);
+          if (!isFinite(pt.x) || !isFinite(pt.y)) continue;
+          const px = offsetX + pt.x * scale;
+          const py = offsetY - pt.y * scale;
+          pathData += (first ? 'M ' : 'L ') + px + ' ' + py + ' ';
+          first = false;
+        }
+        break;
+      }
+      case 'polar': {
+        let first = true;
+        const thetaStart = 0;
+        const thetaEnd = 2 * Math.PI;
+        const thetaStep = 0.01;
+        for (let theta = thetaStart; theta <= thetaEnd; theta += thetaStep) {
+          const pt = evaluatePolar(fn.compiled, theta);
+          if (!isFinite(pt.x) || !isFinite(pt.y)) continue;
+          const px = offsetX + pt.x * scale;
+          const py = offsetY - pt.y * scale;
+          pathData += (first ? 'M ' : 'L ') + px + ' ' + py + ' ';
+          first = false;
+        }
+        break;
+      }
+      // We skip implicit for SVG export for now because pixel rendering is complex
+    }
+
+    if (pathData) {
+      const path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('d', pathData);
+      path.setAttribute('stroke', fn.color);
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('fill', 'none');
+      svg.appendChild(path);
+    }
+  });
+
+  const svgData = new XMLSerializer().serializeToString(svg);
+  const svgBlob = new Blob([svgData], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(svgBlob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'graph.svg';
+  link.click();
   URL.revokeObjectURL(url);
 }
 
-// Dark mode toggle
-function toggleDarkMode(enabled) {
-  document.body.classList.toggle('dark', enabled);
-  localStorage.setItem('darkMode', enabled ? '1' : '0');
-}
+// Drag to delete function feature
+let dragFunctionId = null;
+let dragStartPos = null;
 
-function setup() {
-  // Resize canvas
-  width = canvas.width;
-  height = canvas.height;
+functionsList.addEventListener('mousedown', e => {
+  const target = e.target;
+  if (target.tagName === 'INPUT') {
+    dragFunctionId = null;
+    return;
+  }
+  if (target.classList.contains('function-entry') || target.parentElement.classList.contains('function-entry')) {
+    const entry = target.classList.contains('function-entry') ? target : target.parentElement;
+    const index = Array.from(functionsList.children).indexOf(entry);
+    if (index >= 0) {
+      dragFunctionId = functions[index].id;
+      dragStartPos = {x: e.clientX, y: e.clientY};
+    }
+  }
+});
 
-  // Load dark mode from localStorage
-  const darkPref = localStorage.getItem('darkMode') === '1';
-  themeToggle.checked = darkPref;
-  toggleDarkMode(darkPref);
+document.addEventListener('mouseup', e => {
+  if (!dragFunctionId) return;
+  const dx = e.clientX - dragStartPos.x;
+  const dy = e.clientY - dragStartPos.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > 100) {
+    // Delete if dragged more than 100px
+    removeFunction(dragFunctionId);
+  }
+  dragFunctionId = null;
+});
 
-  themeToggle.addEventListener('change', () => {
-    toggleDarkMode(themeToggle.checked);
-  });
+// Initialize with two example functions
+addFunction('y=sin(x)');
+addFunction('x^2 + y^2 = 4');
 
-  // Bind buttons
-  document.getElementById('add-function').addEventListener('click', () => {
-    const newFn = {
-      id: generateId(),
-      expr: '',
-      color: '#'+Math.floor(Math.random()*16777215).toString(16).padStart(6, '0'),
-      visible: true,
-      type: 'normal'
-    };
-    functionsList.push(newFn);
-    addFunctionRow(newFn);
-  });
-
-  document.getElementById('zoom-in').addEventListener('click', zoomIn);
-  document.getElementById('zoom-out').addEventListener('click', zoomOut);
-  document.getElementById('reset-zoom').addEventListener('click', resetZoom);
-  document.getElementById('export-png').addEventListener('click', exportPNG);
-  document.getElementById('export-svg').addEventListener('click', exportSVG);
-
-  // Add one initial empty function
-  document.getElementById('add-function').click();
-
-  drawAll();
-}
-
-// Initialize
-setup();
+// Event listeners
+addFunctionBtn.addEventListener('click', () => addFunction(''));
+canvas.addEventListener('wheel', onWheel, {passive: false});
+canvas.addEventListener('mousedown', onMouseDown);
+window.addEventListener('mousemove', onMouseMove);
+window.addEventListener('mouseup', onMouseUp);
+exportPNGBtn.addEventListener('click', exportPNG);
+exportSVGBtn.addEventListener('click', exportSVG);

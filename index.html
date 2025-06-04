@@ -1,38 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Minimalistic Graphing Calculator</title>
-  <link rel="stylesheet" href="style.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.11.0/math.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Advanced Graphing Calculator</title>
+<link rel="stylesheet" href="style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.11.0/math.js"></script>
 </head>
 <body>
-  <header>
-    <h1>Graphing Calculator</h1>
-    <label class="theme-toggle">
-      <input type="checkbox" id="theme-toggle" />
-      Dark Mode
-    </label>
-  </header>
+<header>
+  <h1>Graphing Calculator</h1>
+  <label class="theme-toggle">
+    <input type="checkbox" id="theme-toggle" />
+    Dark Mode
+  </label>
+</header>
 
-  <main>
-    <canvas id="graph" width="800" height="500" aria-label="Graphing calculator graph"></canvas>
+<main>
+  <canvas id="graph" width="900" height="600"></canvas>
 
-    <section id="controls">
-      <button id="add-function" title="Add a new function input">＋ Add Function</button>
-      <button id="zoom-in" title="Zoom in">＋ Zoom In</button>
-      <button id="zoom-out" title="Zoom out">－ Zoom Out</button>
-      <button id="reset-zoom" title="Reset zoom">⟳ Reset</button>
-      <button id="export-png" title="Export graph as PNG">🖼 PNG</button>
-      <button id="export-svg" title="Export graph as SVG">📐 SVG</button>
-    </section>
+  <div id="controls">
+    <button id="add-function">+ Add Function</button>
+    <button id="export-png">Export PNG</button>
+    <button id="export-svg">Export SVG</button>
+  </div>
 
-    <section id="functions" aria-live="polite" aria-label="Functions input list">
-      <!-- Function input rows added dynamically here -->
-    </section>
-  </main>
+  <section id="functions-list"></section>
+</main>
 
-  <script src="script.js"></script>
+<script src="script.js"></script>
 </body>
 </html>
