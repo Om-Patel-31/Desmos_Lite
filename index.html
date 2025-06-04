@@ -16,18 +16,21 @@
     </label>
   </header>
 
-
   <div id="controls">
-    <input id="equationInput" type="text" placeholder="Enter equation, e.g. y = x^2" />
-    <button onclick="addEquation()">Add Equation</button>
+    <div id="functions"></div>
+    <button onclick="addFunction()">Add Function</button>
     <button onclick="resetZoom()">Reset Zoom</button>
+    <button onclick="zoomIn()">Zoom In</button>
+    <button onclick="zoomOut()">Zoom Out</button>
     <button onclick="exportGraph('png')">Export PNG</button>
     <button onclick="exportGraph('svg')">Export SVG</button>
   </div>
 
-  <canvas id="graphCanvas" width="800" height="500"></canvas>
+  <canvas id="graph" width="800" height="500"></canvas>
+
   <div id="legend"></div>
   <div id="coords"></div>
+
   <div id="history">
     <h3>Equation History</h3>
     <ul id="history-list"></ul>
