@@ -2,39 +2,32 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Graphing Calculator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Advanced Graphing Calculator</title>
   <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/mathjs@11.11.1/lib/browser/math.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.11.0/math.js"></script>
 </head>
 <body>
   <header>
-    <span>Graphing Calculator</span>
-    <label class="switch" title="Toggle light/dark theme">
+    <h1>Graphing Calculator</h1>
+    <label class="theme-toggle">
       <input type="checkbox" id="theme-toggle" />
-      <span class="slider"></span>
+      Dark Mode
     </label>
   </header>
 
-  <div id="controls">
-    <div id="functions"></div>
-    <button onclick="addFunction()">Add Function</button>
-    <button onclick="resetZoom()">Reset Zoom</button>
-    <button onclick="zoomIn()">Zoom In</button>
-    <button onclick="zoomOut()">Zoom Out</button>
-    <button onclick="exportGraph('png')">Export PNG</button>
-    <button onclick="exportGraph('svg')">Export SVG</button>
-  </div>
+  <main>
+    <canvas id="graph" width="800" height="500"></canvas>
 
-  <canvas id="graph" width="800" height="500"></canvas>
+    <div id="controls">
+      <button onclick="zoomIn()">Zoom In</button>
+      <button onclick="zoomOut()">Zoom Out</button>
+      <button onclick="resetZoom()">Reset</button>
+      <button onclick="addFunction()">Add Function</button>
+    </div>
 
-  <div id="legend"></div>
-  <div id="coords"></div>
-
-  <div id="history">
-    <h3>Equation History</h3>
-    <ul id="history-list"></ul>
-  </div>
+    <section id="functions"></section>
+  </main>
 
   <script src="script.js"></script>
 </body>
