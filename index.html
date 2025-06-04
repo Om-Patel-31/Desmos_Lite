@@ -1,33 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Advanced Graphing Calculator</title>
-<link rel="stylesheet" href="style.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.11.0/math.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Graphing Calculator</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<header>
-  <h1>Graphing Calculator</h1>
-  <label class="theme-toggle">
-    <input type="checkbox" id="theme-toggle" />
-    Dark Mode
-  </label>
-</header>
-
-<main>
-  <canvas id="graph" width="900" height="600"></canvas>
-
-  <div id="controls">
-    <button id="add-function">+ Add Function</button>
-    <button id="export-png">Export PNG</button>
-    <button id="export-svg">Export SVG</button>
+  <div class="container">
+    <h1>Graphing Calculator</h1>
+    <div id="controls">
+      <button id="addFunctionBtn">Add Function</button>
+      <div id="paramSliderContainer">
+        <label>t = <span id="paramValue">0</span></label>
+        <input type="range" id="paramSlider" min="-10" max="10" step="0.1" value="0">
+      </div>
+    </div>
+    <div id="functions"></div>
+    <canvas id="graphCanvas" width="800" height="600"></canvas>
+    <div id="pointCoords"></div>
   </div>
-
-  <section id="functions-list"></section>
-</main>
-
-<script src="script.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>
