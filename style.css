@@ -1,128 +1,157 @@
 :root {
-  --bg-light: #ffffff;
-  --bg-dark: #121212;
-  --text-light: #000000;
-  --text-dark: #ffffff;
+  --bg-color: #ffffff;
+  --text-color: #000000;
+  --header-bg: #f0f0f0;
   --canvas-bg: #f9f9f9;
-  --canvas-bg-dark: #1e1e1e;
   --border-color: #ccc;
-  --border-color-dark: #444;
-}
-
-body {
-  margin: 0;
-  font-family: 'Segoe UI', sans-serif;
-  background: var(--bg-light);
-  color: var(--text-light);
-  transition: background 0.3s, color 0.3s;
 }
 
 body.dark {
-  background: var(--bg-dark);
-  color: var(--text-dark);
+  --bg-color: #303030;
+  --text-color: #ffffff;
+  --header-bg: #000000;
+  --canvas-bg: #222;
+  --border-color: #888;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg-color);
+  color: var(--text-color);
+  transition: background 0.3s, color 0.3s;
+  min-height: 100vh;
 }
 
 header {
-  display: flex;
-  justify-content: space-between;
-  padding: 1rem;
-  background-color: #4f46e5;
-  color: white;
-}
-
-.theme-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-canvas {
-  display: block;
-  background: var(--canvas-bg);
-  margin: 1rem auto;
-  border: 1px solid var(--border-color);
-  transition: background 0.3s;
-}
-
-body.dark canvas {
-  background: var(--canvas-bg-dark);
-  border-color: var(--border-color-dark);
+  padding: 20px;
+  font-size: 24px;
+  background: var(--header-bg);
+  color: var(--text-color);
+  width: 100%;
+  text-align: center;
 }
 
 #controls {
-  text-align: center;
-  margin: 1rem;
+  margin: 20px;
 }
 
-#controls button {
-  margin: 0.3rem;
-  padding: 0.4rem 0.8rem;
-  font-size: 0.9rem;
-  cursor: pointer;
-  background: #4f46e5;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  transition: background 0.2s;
+input, button {
+  padding: 8px;
+  font-size: 16px;
+  margin: 2px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
 }
 
-#controls button:hover {
-  background: #3730a3;
-}
-
-#functions {
-  max-width: 800px;
-  margin: 0 auto 1rem auto;
+canvas {
+  border: 1px solid var(--border-color);
+  background: var(--canvas-bg);
+  touch-action: none;
 }
 
 .function-row {
+  margin-bottom: 5px;
   display: flex;
   align-items: center;
-  margin-bottom: 0.5rem;
-  gap: 0.5rem;
 }
 
-.function-row input[type="text"] {
-  flex: 1;
-  padding: 0.3rem;
-  font-size: 1rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  transition: border 0.2s;
+.function-row input[type="color"],
+.function-row input[type="text"],
+.function-row select {
+  margin-right: 8px;
 }
 
-.function-row input[type="color"] {
-  width: 36px;
-  height: 36px;
+.function-row .delete {
+  background-color: red;
+  color: white;
   border: none;
-  padding: 0;
-}
-
-.function-row button {
-  padding: 0.3rem 0.5rem;
-  font-size: 0.9rem;
-  border: none;
-  background: #ccc;
-  border-radius: 4px;
   cursor: pointer;
 }
 
-.function-row button:hover {
-  background: #999;
+#legend {
+  margin-top: 10px;
+}
+
+#legend div {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+#legend div span {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+}
+
+#coords {
+  margin-top: 10px;
+  font-size: 14px;
 }
 
 #history {
+  margin-top: 20px;
+  width: 90%;
   max-width: 800px;
-  margin: 1rem auto;
-  padding: 1rem;
-  border-top: 1px solid #ddd;
-  list-style: none;
 }
 
 #history h3 {
-  margin-top: 0;
+  margin-bottom: 5px;
 }
 
-#history li {
-  margin: 0.2rem 0;
+#history-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+/* Toggle switch styles */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+  vertical-align: middle;
+  margin-left: 10px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #ccc;
+  border-radius: 24px;
+  transition: 0.4s;
+}
+
+.slider::before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  border-radius: 50%;
+  transition: 0.4s;
+}
+
+.switch input:checked + .slider {
+  background-color: #303030;
+}
+
+.switch input:checked + .slider::before {
+  transform: translateX(26px);
 }

@@ -1,256 +1,265 @@
-
-const canvas = document.getElementById("graphCanvas");
+const canvas = document.getElementById("graph");
 const ctx = canvas.getContext("2d");
-const equationInput = document.getElementById("equationInput");
-const historyList = document.getElementById("history");
+const functionsDiv = document.getElementById("functions");
 const legend = document.getElementById("legend");
-const toggle = document.getElementById("darkToggle");
+const coords = document.getElementById("coords");
+const historyList = document.getElementById("history-list");
 
-let equations = [];
-let hiddenEquations = new Set();
-let history = [];
-let draggingEquation = null;
-let dragOffsetX = 0;
-let dragOffsetY = 0;
-
-let xMin = -10, xMax = 10, yMin = -7.5, yMax = 7.5;
 let width = canvas.width;
 let height = canvas.height;
+let xMin = -10, xMax = 10, yMin = -5, yMax = 5;
+let selectedPoints = [];
 
 function scaleX() { return width / (xMax - xMin); }
 function scaleY() { return height / (yMax - yMin); }
 
 function toCanvasX(x) { return (x - xMin) * scaleX(); }
 function toCanvasY(y) { return height - (y - yMin) * scaleY(); }
-function fromCanvasX(px) { return px / scaleX() + xMin; }
+function fromCanvasX(px) { return xMin + px / scaleX(); }
 function fromCanvasY(py) { return yMax - py / scaleY(); }
 
+function getCssVar(name) {
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
 function drawAxes() {
-  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--canvas-bg').trim();
+  ctx.fillStyle = getCssVar('--canvas-bg') || '#f9f9f9';
   ctx.fillRect(0, 0, width, height);
 
-  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--border-color').trim();
+  ctx.strokeStyle = getCssVar('--border-color') || '#bbb';
   ctx.beginPath();
+
   const y0 = toCanvasY(0);
   ctx.moveTo(0, y0); ctx.lineTo(width, y0);
+
   const x0 = toCanvasX(0);
   ctx.moveTo(x0, 0); ctx.lineTo(x0, height);
   ctx.stroke();
 }
 
-function plotEquation(eq, color = "#f00", type = "normal", shade = false) {
-  ctx.strokeStyle = color;
+function getFunctions() {
+  const rows = functionsDiv.querySelectorAll(".function-row");
+  return Array.from(rows).map(row => {
+    const color = row.querySelector(".color-picker").value;
+    const eqn = row.querySelector(".equation").value.trim();
+    const mode = row.querySelector(".mode").value;
+    const isIneq = eqn.includes('<') || eqn.includes('>');
+    return { color, eqn, mode, isIneq };
+  }).filter(f => f.eqn);
+}
+
+function graphFunctions() {
+  drawAxes();
+  legend.innerHTML = '';
+
+  getFunctions().forEach(({ color, eqn, mode, isIneq }) => {
+    const legendItem = document.createElement('div');
+    legendItem.innerHTML = `<span style="background:${color};"></span> ${eqn}`;
+    legend.appendChild(legendItem);
+
+    try {
+      if (mode === "polar") {
+        plotPolar(eqn, color);
+      } else if (mode === "parametric") {
+        plotParametric(eqn, color);
+      } else {
+        plotCartesian(eqn, color, isIneq);
+      }
+    } catch {}
+  });
+
+  selectedPoints.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(toCanvasX(p.x), toCanvasY(p.y), 4, 0, 2 * Math.PI);
+    ctx.fillStyle = 'orange';
+    ctx.fill();
+  });
+}
+
+function plotCartesian(eqn, color, isIneq) {
+  let expr;
+  try {
+    if (!eqn.includes('=')) eqn = "y=" + eqn;
+    const [lhs, rhs] = eqn.split('=');
+    expr = math.compile(rhs);
+  } catch { return; }
+
   ctx.beginPath();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
   let first = true;
 
-  for (let i = 0; i < width; i++) {
-    const x = fromCanvasX(i);
+  for (let px = 0; px <= width; px++) {
+    const x = fromCanvasX(px);
     let y;
     try {
-      if (type === "polar") {
-        const r = eq(x); y = r * Math.sin(x); x = r * Math.cos(x);
-      } else if (type === "parametric") {
-        const [fx, fy] = eq(x); x = fx; y = fy;
-      } else {
-        y = eq(x);
-      }
-    } catch {
-      continue;
-    }
+      y = expr.evaluate({ x });
+    } catch { continue; }
 
-    const px = toCanvasX(x);
     const py = toCanvasY(y);
 
-    if (isNaN(px) || isNaN(py) || !isFinite(px) || !isFinite(py)) continue;
-
-    if (first) {
-      ctx.moveTo(px, py);
-      first = false;
+    if (isIneq) {
+      if (eqn.includes("<")) ctx.fillRect(px, py, 1, height - py);
+      if (eqn.includes(">")) ctx.fillRect(px, 0, 1, py);
     } else {
-      ctx.lineTo(px, py);
-    }
-
-    if (shade) {
-      ctx.lineTo(px, toCanvasY(yMin));
-      ctx.lineTo(px, py);
+      if (first) { ctx.moveTo(px, py); first = false; }
+      else ctx.lineTo(px, py);
     }
   }
 
+  if (!isIneq) ctx.stroke();
+}
+
+function plotParametric(eqn, color) {
+  const [xExpr, yExpr] = eqn.split(';').map(e => math.compile(e));
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  for (let t = -10; t <= 10; t += 0.01) {
+    const x = xExpr.evaluate({ t });
+    const y = yExpr.evaluate({ t });
+    const px = toCanvasX(x), py = toCanvasY(y);
+    ctx.lineTo(px, py);
+  }
   ctx.stroke();
 }
 
-function parseEquation(input) {
-  const trimmed = input.trim();
-  const isInequality = /[<>]=?/.test(trimmed);
-  const isPolar = /^r\s*=/.test(trimmed);
-  const isParametric = /^x\s*=.*;.*y\s*=/.test(trimmed);
-
-  let func = () => NaN;
-
-  try {
-    if (isPolar) {
-      const expr = trimmed.split("=")[1];
-      const compiled = math.compile(expr);
-      func = angle => compiled.evaluate({ x: angle, θ: angle });
-      return { func, type: "polar", shade: false };
-    } else if (isParametric) {
-      const [xExpr, yExpr] = trimmed.split(";").map(s => s.split("=")[1]);
-      const cx = math.compile(xExpr);
-      const cy = math.compile(yExpr);
-      func = t => [cx.evaluate({ t }), cy.evaluate({ t })];
-      return { func, type: "parametric", shade: false };
-    } else if (isInequality) {
-      const [lhs, rhs] = trimmed.split(/([<>]=?)/);
-      const op = trimmed.match(/[<>]=?/)[0];
-      const compiled = math.compile(lhs.includes("x") ? lhs : rhs);
-      func = x => compiled.evaluate({ x });
-      return { func, type: "normal", shade: true };
-    } else {
-      const eq = trimmed.replace(/^y\s*=\s*/, '');
-      const compiled = math.compile(eq);
-      func = x => compiled.evaluate({ x });
-      return { func, type: "normal", shade: false };
-    }
-  } catch {
-    return null;
+function plotPolar(eqn, color) {
+  const rExpr = math.compile(eqn);
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  for (let a = 0; a <= 2 * Math.PI; a += 0.01) {
+    const r = rExpr.evaluate({ θ: a, theta: a });
+    const x = r * Math.cos(a);
+    const y = r * Math.sin(a);
+    ctx.lineTo(toCanvasX(x), toCanvasY(y));
   }
+  ctx.stroke();
 }
 
-function addEquation() {
-  const input = equationInput.value;
-  const parsed = parseEquation(input);
-  if (!parsed) return;
+function addFunction() {
+  const row = document.createElement("div");
+  row.className = "function-row";
+  const defaultColor = `#${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')}`;
+  row.innerHTML = `
+    <input type="color" class="color-picker" value="${defaultColor}" />
+    <input type="text" class="equation" placeholder="e.g. y=x^2 or r=1+sin(θ)" />
+    <select class="mode">
+      <option value="cartesian">y=</option>
+      <option value="parametric">x=; y=</option>
+      <option value="polar">r=</option>
+    </select>
+    <button class="delete">✕</button>
+  `;
+  functionsDiv.appendChild(row);
 
-  const color = "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
-  equations.push({ input, ...parsed, color });
-  history.push(input);
-  updateHistory();
-  updateLegend();
-  equationInput.value = "";
-  draw();
-}
-
-function updateLegend() {
-  legend.innerHTML = "";
-  equations.forEach((eq, index) => {
-    const item = document.createElement("div");
-    item.className = "legend-item";
-    if (hiddenEquations.has(index)) item.classList.add("hidden");
-    item.onclick = () => {
-      if (hiddenEquations.has(index)) hiddenEquations.delete(index);
-      else hiddenEquations.add(index);
-      draw();
-      updateLegend();
-    };
-    const colorBox = document.createElement("span");
-    colorBox.className = "legend-color";
-    colorBox.style.background = eq.color;
-    const label = document.createElement("span");
-    label.textContent = eq.input;
-    item.appendChild(colorBox);
-    item.appendChild(label);
-    legend.appendChild(item);
+  const eqnInput = row.querySelector(".equation");
+  eqnInput.addEventListener("input", () => {
+    saveToHistory(eqnInput.value);
+    graphFunctions();
   });
-}
 
-function updateHistory() {
-  historyList.innerHTML = "";
-  [...history].reverse().forEach(eq => {
-    const li = document.createElement("li");
-    li.textContent = eq;
-    li.onclick = () => {
-      equationInput.value = eq;
-    };
-    historyList.appendChild(li);
+  row.querySelector(".color-picker").addEventListener("input", graphFunctions);
+  row.querySelector(".mode").addEventListener("change", graphFunctions);
+  row.querySelector(".delete").addEventListener("click", () => {
+    row.remove();
+    graphFunctions();
   });
+
+  graphFunctions();
 }
 
-function drawPoints() {
-  // Optional: Add point selection/plotting feature here.
+function saveToHistory(eqn) {
+  if (!eqn) return;
+  const li = document.createElement("li");
+  li.textContent = eqn;
+  li.onclick = () => {
+    const row = document.createElement("div");
+    row.className = "function-row";
+    row.innerHTML = `
+      <input type="color" class="color-picker" value="#ff0000" />
+      <input type="text" class="equation" value="${eqn}" />
+      <select class="mode"><option value="cartesian">y=</option></select>
+      <button class="delete">✕</button>
+    `;
+    functionsDiv.appendChild(row);
+    graphFunctions();
+  };
+  historyList.appendChild(li);
 }
 
-function draw() {
-  drawAxes();
-  equations.forEach((eq, i) => {
-    if (!hiddenEquations.has(i)) plotEquation(eq.func, eq.color, eq.type, eq.shade);
-  });
-  drawPoints();
+function zoom(factor) {
+  const xc = (xMin + xMax) / 2;
+  const yc = (yMin + yMax) / 2;
+  const w = (xMax - xMin) * factor;
+  const h = (yMax - yMin) * factor;
+  xMin = xc - w / 2;
+  xMax = xc + w / 2;
+  yMin = yc - h / 2;
+  yMax = yc + h / 2;
+  graphFunctions();
 }
 
+function zoomIn() { zoom(0.8); }
+function zoomOut() { zoom(1.25); }
 function resetZoom() {
-  xMin = -10; xMax = 10; yMin = -7.5; yMax = 7.5;
-  draw();
+  xMin = -10; xMax = 10; yMin = -5; yMax = 5;
+  graphFunctions();
 }
 
-function exportGraph(format) {
-  if (format === 'png') {
-    const link = document.createElement('a');
-    link.download = "graph.png";
-    link.href = canvas.toDataURL();
-    link.click();
-  } else if (format === 'svg') {
-    alert("SVG export requires additional SVG rendering logic.");
-  }
-}
-
-// Zoom + Pan
-canvas.addEventListener("wheel", e => {
-  const zoomFactor = e.deltaY < 0 ? 0.9 : 1.1;
-  const mx = fromCanvasX(e.offsetX);
-  const my = fromCanvasY(e.offsetY);
-  const widthX = xMax - xMin;
-  const heightY = yMax - yMin;
-
-  xMin = mx - (mx - xMin) * zoomFactor;
-  xMax = xMin + widthX * zoomFactor;
-  yMin = my - (my - yMin) * zoomFactor;
-  yMax = yMin + heightY * zoomFactor;
-
-  draw();
-  e.preventDefault();
-});
-
-let isDragging = false;
-let lastX, lastY;
+let dragging = false;
+let lastTouch = null;
 
 canvas.addEventListener("pointerdown", e => {
-  isDragging = true;
-  lastX = e.clientX;
-  lastY = e.clientY;
+  dragging = true;
+  lastTouch = { x: e.clientX, y: e.clientY };
 });
 
 canvas.addEventListener("pointermove", e => {
-  if (!isDragging) return;
-  const dx = (e.clientX - lastX) / scaleX();
-  const dy = (e.clientY - lastY) / scaleY();
+  const x = fromCanvasX(e.offsetX).toFixed(2);
+  const y = fromCanvasY(e.offsetY).toFixed(2);
+  coords.textContent = `x: ${x}, y: ${y}`;
 
-  xMin -= dx;
-  xMax -= dx;
-  yMin += dy;
-  yMax += dy;
-
-  lastX = e.clientX;
-  lastY = e.clientY;
-
-  draw();
+  if (!dragging) return;
+  const dx = (e.clientX - lastTouch.x) / scaleX();
+  const dy = (e.clientY - lastTouch.y) / scaleY();
+  xMin -= dx; xMax -= dx;
+  yMin += dy; yMax += dy;
+  lastTouch = { x: e.clientX, y: e.clientY };
+  graphFunctions();
 });
 
-canvas.addEventListener("pointerup", () => {
-  isDragging = false;
+canvas.addEventListener("pointerup", e => {
+  dragging = false;
 });
 
-// Theme toggle
-toggle.addEventListener("change", () => {
-  document.body.classList.toggle("dark", toggle.checked);
-  localStorage.setItem("theme", toggle.checked ? "dark" : "light");
-  draw();
+canvas.addEventListener("click", e => {
+  const x = fromCanvasX(e.offsetX);
+  const y = fromCanvasY(e.offsetY);
+  selectedPoints.push({ x, y });
+  graphFunctions();
 });
+
+canvas.addEventListener("wheel", e => {
+  zoom(e.deltaY > 0 ? 1.1 : 0.9);
+  e.preventDefault();
+});
+
+function exportGraph(format) {
+  if (format === "png") {
+    const link = document.createElement("a");
+    link.download = "graph.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  } else if (format === "svg") {
+    alert("SVG export not supported yet in this version.");
+  }
+}
 
 window.addEventListener("DOMContentLoaded", () => {
-  const saved = localStorage.getItem("theme");
-  if (saved === "dark") {
-    document.body.classList.add("dark");
-    toggle.checked = true;
-  }
-  draw();
+  const savedTheme = localStorage.getItem('theme');
+  const isDark = savedTheme === 'dark';
+  document.body.classList.toggle('dark', isDark);
+  document.getElementById("theme-toggle").checked = isDark;
+
+  addFunction();
 });
