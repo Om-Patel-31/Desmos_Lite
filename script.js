@@ -1,314 +1,256 @@
-(() => {
-  const canvas = document.getElementById('graphCanvas');
-  const ctx = canvas.getContext('2d');
-  const addFunctionBtn = document.getElementById('addFunctionBtn');
-  const functionsContainer = document.getElementById('functions');
-  const pointCoords = document.getElementById('pointCoords');
-  const paramSliderContainer = document.getElementById('paramSliderContainer');
-  const paramSlider = document.getElementById('paramSlider');
-  const paramValueDisplay = document.getElementById('paramValue');
 
-  let functions = [];
-  let scale = 50;
-  let offsetX = canvas.width / 2;
-  let offsetY = canvas.height / 2;
-  let dragging = false;
-  let dragStart = { x: 0, y: 0 };
-  let dragOffsetStart = { x: 0, y: 0 };
+const canvas = document.getElementById("graphCanvas");
+const ctx = canvas.getContext("2d");
+const equationInput = document.getElementById("equationInput");
+const historyList = document.getElementById("history");
+const legend = document.getElementById("legend");
+const toggle = document.getElementById("darkToggle");
 
-  function unitToPixel(x, y) {
-    return {
-      x: offsetX + x * scale,
-      y: offsetY - y * scale
-    };
-  }
+let equations = [];
+let hiddenEquations = new Set();
+let history = [];
+let draggingEquation = null;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
 
-  function pixelToUnit(px, py) {
-    return {
-      x: (px - offsetX) / scale,
-      y: (offsetY - py) / scale
-    };
-  }
+let xMin = -10, xMax = 10, yMin = -7.5, yMax = 7.5;
+let width = canvas.width;
+let height = canvas.height;
 
-  function drawGrid() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 1;
+function scaleX() { return width / (xMax - xMin); }
+function scaleY() { return height / (yMax - yMin); }
 
-    for (let x = 0; x < canvas.width; x += scale) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
-      ctx.stroke();
-    }
+function toCanvasX(x) { return (x - xMin) * scaleX(); }
+function toCanvasY(y) { return height - (y - yMin) * scaleY(); }
+function fromCanvasX(px) { return px / scaleX() + xMin; }
+function fromCanvasY(py) { return yMax - py / scaleY(); }
 
-    for (let y = 0; y < canvas.height; y += scale) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvas.width, y);
-      ctx.stroke();
-    }
+function drawAxes() {
+  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--canvas-bg').trim();
+  ctx.fillRect(0, 0, width, height);
 
-    ctx.strokeStyle = '#888';
-    ctx.beginPath();
-    ctx.moveTo(0, offsetY);
-    ctx.lineTo(canvas.width, offsetY);
-    ctx.stroke();
+  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--border-color').trim();
+  ctx.beginPath();
+  const y0 = toCanvasY(0);
+  ctx.moveTo(0, y0); ctx.lineTo(width, y0);
+  const x0 = toCanvasX(0);
+  ctx.moveTo(x0, 0); ctx.lineTo(x0, height);
+  ctx.stroke();
+}
 
-    ctx.beginPath();
-    ctx.moveTo(offsetX, 0);
-    ctx.lineTo(offsetX, canvas.height);
-    ctx.stroke();
-  }
+function plotEquation(eq, color = "#f00", type = "normal", shade = false) {
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  let first = true;
 
-  function drawExplicit(fn) {
-    ctx.strokeStyle = fn.color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    let first = true;
-    for (let px = 0; px < canvas.width; px++) {
-      const unitX = pixelToUnit(px, 0).x;
-      try {
-        const unitY = fn.compiled(unitX);
-        const py = unitToPixel(unitX, unitY).y;
-        if (first) {
-          ctx.moveTo(px, py);
-          first = false;
-        } else {
-          ctx.lineTo(px, py);
-        }
-      } catch {}
-    }
-    ctx.stroke();
-  }
-
-  function drawParametric(fn, tValue) {
-    ctx.strokeStyle = fn.color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    let first = true;
-    for (let t = -10; t <= 10; t += 0.05) {
-      try {
-        const x = fn.compiledX(t);
-        const y = fn.compiledY(t);
-        const pt = unitToPixel(x, y);
-        if (first) {
-          ctx.moveTo(pt.x, pt.y);
-          first = false;
-        } else {
-          ctx.lineTo(pt.x, pt.y);
-        }
-      } catch {}
-    }
-
-    // draw point for selected t
-    if (tValue !== null) {
-      const x = fn.compiledX(tValue);
-      const y = fn.compiledY(tValue);
-      const pt = unitToPixel(x, y);
-      ctx.fillStyle = fn.color;
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI);
-      ctx.fill();
-    }
-
-    ctx.stroke();
-  }
-
-  function drawImplicit(fn) {
-    const imageData = ctx.createImageData(canvas.width, canvas.height);
-    for (let px = 0; px < canvas.width; px++) {
-      for (let py = 0; py < canvas.height; py++) {
-        const unit = pixelToUnit(px, py);
-        try {
-          const val = fn.compiled(unit.x, unit.y);
-          if (Math.abs(val) < 0.05) {
-            const index = (py * canvas.width + px) * 4;
-            const rgb = hexToRgb(fn.color);
-            imageData.data[index] = rgb.r;
-            imageData.data[index + 1] = rgb.g;
-            imageData.data[index + 2] = rgb.b;
-            imageData.data[index + 3] = 255;
-          }
-        } catch {}
-      }
-    }
-    ctx.putImageData(imageData, 0, 0);
-  }
-
-  function drawInequality(fn) {
-    const imageData = ctx.createImageData(canvas.width, canvas.height);
-    for (let px = 0; px < canvas.width; px++) {
-      for (let py = 0; py < canvas.height; py++) {
-        const unit = pixelToUnit(px, py);
-        try {
-          const val = fn.compiled(unit.x, unit.y);
-          if (val) {
-            const index = (py * canvas.width + px) * 4;
-            const rgb = hexToRgb(fn.color);
-            imageData.data[index] = rgb.r;
-            imageData.data[index + 1] = rgb.g;
-            imageData.data[index + 2] = rgb.b;
-            imageData.data[index + 3] = 50;
-          }
-        } catch {}
-      }
-    }
-    ctx.putImageData(imageData, 0, 0);
-  }
-
-  function addFunction() {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'function-entry';
-    const input = document.createElement('input');
-    input.placeholder = 'e.g. y = x^2 or x(t) = cos(t), y(t) = sin(t)';
-    const color = document.createElement('input');
-    color.type = 'color';
-    color.value = getRandomColor();
-
-    wrapper.appendChild(input);
-    wrapper.appendChild(color);
-    functionsContainer.appendChild(wrapper);
-
-    const fn = { input, color: color.value, visible: true };
-    functions.push(fn);
-
-    input.addEventListener('input', () => parseAndDraw(fn, input));
-    color.addEventListener('input', () => {
-      fn.color = color.value;
-      draw();
-    });
-
-    parseAndDraw(fn, input);
-  }
-
-  function parseAndDraw(fn, inputEl) {
+  for (let i = 0; i < width; i++) {
+    const x = fromCanvasX(i);
+    let y;
     try {
-      const expr = inputEl.value.trim().toLowerCase();
-      fn.error = false;
-
-      if (/^y\s*=/.test(expr)) {
-        fn.type = 'explicit';
-        fn.compiled = new Function('x', `return ${expr.split('=')[1]}`);
-      } else if (/^x\(t\)\s*=/.test(expr)) {
-        const parts = expr.split(',');
-        const xExpr = parts[0].split('=')[1];
-        const yExpr = parts[1].split('=')[1];
-        fn.type = 'parametric';
-        fn.compiledX = new Function('t', `return ${xExpr}`);
-        fn.compiledY = new Function('t', `return ${yExpr}`);
-      } else if (/</.test(expr) || />/.test(expr)) {
-        fn.type = 'inequality';
-        fn.compiled = new Function('x', 'y', `return ${expr}`);
-      } else if (/=/.test(expr)) {
-        fn.type = 'implicit';
-        fn.compiled = new Function('x', 'y', `return ${expr.split('=')[0]} - (${expr.split('=')[1]})`);
+      if (type === "polar") {
+        const r = eq(x); y = r * Math.sin(x); x = r * Math.cos(x);
+      } else if (type === "parametric") {
+        const [fx, fy] = eq(x); x = fx; y = fy;
       } else {
-        throw new Error("Unrecognized format");
+        y = eq(x);
       }
-
-      inputEl.classList.remove('error');
     } catch {
-      inputEl.classList.add('error');
-      fn.error = true;
+      continue;
     }
 
-    checkParametric();
-    draw();
+    const px = toCanvasX(x);
+    const py = toCanvasY(y);
+
+    if (isNaN(px) || isNaN(py) || !isFinite(px) || !isFinite(py)) continue;
+
+    if (first) {
+      ctx.moveTo(px, py);
+      first = false;
+    } else {
+      ctx.lineTo(px, py);
+    }
+
+    if (shade) {
+      ctx.lineTo(px, toCanvasY(yMin));
+      ctx.lineTo(px, py);
+    }
   }
 
-  function draw() {
-    drawGrid();
-    functions.forEach(fn => {
-      if (!fn.visible || fn.error) return;
-      switch (fn.type) {
-        case 'explicit': drawExplicit(fn); break;
-        case 'parametric': drawParametric(fn, paramSliderContainer.style.display === 'flex' ? parseFloat(paramSlider.value) : null); break;
-        case 'implicit': drawImplicit(fn); break;
-        case 'inequality': drawInequality(fn); break;
-      }
-    });
+  ctx.stroke();
+}
+
+function parseEquation(input) {
+  const trimmed = input.trim();
+  const isInequality = /[<>]=?/.test(trimmed);
+  const isPolar = /^r\s*=/.test(trimmed);
+  const isParametric = /^x\s*=.*;.*y\s*=/.test(trimmed);
+
+  let func = () => NaN;
+
+  try {
+    if (isPolar) {
+      const expr = trimmed.split("=")[1];
+      const compiled = math.compile(expr);
+      func = angle => compiled.evaluate({ x: angle, θ: angle });
+      return { func, type: "polar", shade: false };
+    } else if (isParametric) {
+      const [xExpr, yExpr] = trimmed.split(";").map(s => s.split("=")[1]);
+      const cx = math.compile(xExpr);
+      const cy = math.compile(yExpr);
+      func = t => [cx.evaluate({ t }), cy.evaluate({ t })];
+      return { func, type: "parametric", shade: false };
+    } else if (isInequality) {
+      const [lhs, rhs] = trimmed.split(/([<>]=?)/);
+      const op = trimmed.match(/[<>]=?/)[0];
+      const compiled = math.compile(lhs.includes("x") ? lhs : rhs);
+      func = x => compiled.evaluate({ x });
+      return { func, type: "normal", shade: true };
+    } else {
+      const eq = trimmed.replace(/^y\s*=\s*/, '');
+      const compiled = math.compile(eq);
+      func = x => compiled.evaluate({ x });
+      return { func, type: "normal", shade: false };
+    }
+  } catch {
+    return null;
   }
+}
 
-  function getRandomColor() {
-    const hue = Math.floor(Math.random() * 360);
-    return `hsl(${hue}, 100%, 60%)`;
-  }
+function addEquation() {
+  const input = equationInput.value;
+  const parsed = parseEquation(input);
+  if (!parsed) return;
 
-  function hexToRgb(hex) {
-    const bigint = parseInt(hex.replace('#', ''), 16);
-    return {
-      r: (bigint >> 16) & 255,
-      g: (bigint >> 8) & 255,
-      b: bigint & 255
-    };
-  }
+  const color = "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
+  equations.push({ input, ...parsed, color });
+  history.push(input);
+  updateHistory();
+  updateLegend();
+  equationInput.value = "";
+  draw();
+}
 
-  function checkParametric() {
-    const hasParam = functions.some(fn => fn.visible && fn.type === 'parametric');
-    paramSliderContainer.style.display = hasParam ? 'flex' : 'none';
-  }
-
-  canvas.addEventListener('click', e => {
-    const rect = canvas.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    const coord = pixelToUnit(px, py);
-    pointCoords.style.display = 'block';
-    pointCoords.style.left = `${px + 10}px`;
-    pointCoords.style.top = `${py + 10}px`;
-    pointCoords.textContent = `(${coord.x.toFixed(3)}, ${coord.y.toFixed(3)})`;
-  });
-
-  canvas.addEventListener('mouseleave', () => {
-    pointCoords.style.display = 'none';
-  });
-
-  canvas.addEventListener('mousedown', e => {
-    dragging = true;
-    dragStart.x = e.clientX;
-    dragStart.y = e.clientY;
-    dragOffsetStart.x = offsetX;
-    dragOffsetStart.y = offsetY;
-    canvas.style.cursor = 'grabbing';
-  });
-
-  window.addEventListener('mouseup', () => {
-    dragging = false;
-    canvas.style.cursor = 'grab';
-  });
-
-  window.addEventListener('mousemove', e => {
-    if (dragging) {
-      offsetX = dragOffsetStart.x + (e.clientX - dragStart.x);
-      offsetY = dragOffsetStart.y + (e.clientY - dragStart.y);
+function updateLegend() {
+  legend.innerHTML = "";
+  equations.forEach((eq, index) => {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    if (hiddenEquations.has(index)) item.classList.add("hidden");
+    item.onclick = () => {
+      if (hiddenEquations.has(index)) hiddenEquations.delete(index);
+      else hiddenEquations.add(index);
       draw();
-    }
+      updateLegend();
+    };
+    const colorBox = document.createElement("span");
+    colorBox.className = "legend-color";
+    colorBox.style.background = eq.color;
+    const label = document.createElement("span");
+    label.textContent = eq.input;
+    item.appendChild(colorBox);
+    item.appendChild(label);
+    legend.appendChild(item);
   });
+}
 
-  canvas.addEventListener('wheel', e => {
-    e.preventDefault();
-    const delta = -e.deltaY;
-    const zoomFactor = 1.1;
-    const mouseX = e.offsetX;
-    const mouseY = e.offsetY;
-    const beforeZoom = pixelToUnit(mouseX, mouseY);
-
-    scale *= delta > 0 ? zoomFactor : 1 / zoomFactor;
-    scale = Math.min(Math.max(scale, 10), 300);
-
-    const afterZoom = pixelToUnit(mouseX, mouseY);
-    offsetX += (afterZoom.x - beforeZoom.x) * scale;
-    offsetY -= (afterZoom.y - beforeZoom.y) * scale;
-
-    draw();
-  }, { passive: false });
-
-  paramSlider.addEventListener('input', e => {
-    paramValueDisplay.textContent = e.target.value;
-    draw();
+function updateHistory() {
+  historyList.innerHTML = "";
+  [...history].reverse().forEach(eq => {
+    const li = document.createElement("li");
+    li.textContent = eq;
+    li.onclick = () => {
+      equationInput.value = eq;
+    };
+    historyList.appendChild(li);
   });
+}
 
-  addFunctionBtn.onclick = () => addFunction();
-  addFunction();
-})();
+function drawPoints() {
+  // Optional: Add point selection/plotting feature here.
+}
+
+function draw() {
+  drawAxes();
+  equations.forEach((eq, i) => {
+    if (!hiddenEquations.has(i)) plotEquation(eq.func, eq.color, eq.type, eq.shade);
+  });
+  drawPoints();
+}
+
+function resetZoom() {
+  xMin = -10; xMax = 10; yMin = -7.5; yMax = 7.5;
+  draw();
+}
+
+function exportGraph(format) {
+  if (format === 'png') {
+    const link = document.createElement('a');
+    link.download = "graph.png";
+    link.href = canvas.toDataURL();
+    link.click();
+  } else if (format === 'svg') {
+    alert("SVG export requires additional SVG rendering logic.");
+  }
+}
+
+// Zoom + Pan
+canvas.addEventListener("wheel", e => {
+  const zoomFactor = e.deltaY < 0 ? 0.9 : 1.1;
+  const mx = fromCanvasX(e.offsetX);
+  const my = fromCanvasY(e.offsetY);
+  const widthX = xMax - xMin;
+  const heightY = yMax - yMin;
+
+  xMin = mx - (mx - xMin) * zoomFactor;
+  xMax = xMin + widthX * zoomFactor;
+  yMin = my - (my - yMin) * zoomFactor;
+  yMax = yMin + heightY * zoomFactor;
+
+  draw();
+  e.preventDefault();
+});
+
+let isDragging = false;
+let lastX, lastY;
+
+canvas.addEventListener("pointerdown", e => {
+  isDragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
+canvas.addEventListener("pointermove", e => {
+  if (!isDragging) return;
+  const dx = (e.clientX - lastX) / scaleX();
+  const dy = (e.clientY - lastY) / scaleY();
+
+  xMin -= dx;
+  xMax -= dx;
+  yMin += dy;
+  yMax += dy;
+
+  lastX = e.clientX;
+  lastY = e.clientY;
+
+  draw();
+});
+
+canvas.addEventListener("pointerup", () => {
+  isDragging = false;
+});
+
+// Theme toggle
+toggle.addEventListener("change", () => {
+  document.body.classList.toggle("dark", toggle.checked);
+  localStorage.setItem("theme", toggle.checked ? "dark" : "light");
+  draw();
+});
+
+window.addEventListener("DOMContentLoaded", () => {
+  const saved = localStorage.getItem("theme");
+  if (saved === "dark") {
+    document.body.classList.add("dark");
+    toggle.checked = true;
+  }
+  draw();
+});
